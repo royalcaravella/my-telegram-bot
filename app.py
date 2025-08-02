@@ -2,16 +2,35 @@ from flask import Flask, request
 import telegram
 import os
 from datetime import datetime
+import asyncio
+import threading
 
 app = Flask(__name__)
 
 TOKEN = os.getenv('TOKEN')
-bot = telegram.Bot(token=TOKEN)
+
+def send_message_thread(chat_id, text):
+    """Отправка сообщения в отдельном потоке"""
+    try:
+        async def send_async():
+            bot = telegram.Bot(token=TOKEN)
+            await bot.send_message(chat_id=chat_id, text=text, disable_notification=True)
+        
+        # Создаем новый event loop для потока
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(send_async())
+        loop.close()
+    except Exception as e:
+        print(f"Error sending message: {e}")
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
-        update = telegram.Update.de_json(request.get_json(force=True), bot)
+        # Создаем временный бот для парсинга
+        temp_bot = telegram.Bot(token=TOKEN)
+        update = telegram.Update.de_json(request.get_json(force=True), temp_bot)
+        
         if update.message:
             message_text = update.message.text.lower()
             chat_id = update.message.chat_id
@@ -41,8 +60,10 @@ def webhook():
             else:
                 reply = f"Спасибо за сообщение, {user_name}! 📨\n\nВаш запрос: '{original_text}'\n\n🤖 Я обработал ваше сообщение. Для быстрой помощи используйте команды:\n• 'заказ' - оформить бронирование\n• 'цены' - узнать стоимость\n• 'круизы' - посмотреть маршруты\n\n📞 Срочные вопросы: +7 (800) 555-35-35"
             
-            # Синхронная отправка (v13.15)
-            bot.send_message(chat_id=chat_id, text=reply, disable_notification=True)
+            # Отправка в отдельном потоке
+            thread = threading.Thread(target=send_message_thread, args=(chat_id, reply))
+            thread.daemon = True
+            thread.start()
             
     except Exception as e:
         print(f"Webhook error: {e}")
